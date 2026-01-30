@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  waha:
+    image: devlikeapro/waha:latest
+    container_name: waha_gows
+    platform: linux/amd64
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - WHATSAPP_DEFAULT_ENGINE=GOWS
+      
+      - WAHA_NO_API_KEY=true
+      - WAHA_DASHBOARD_NO_PASSWORD=true
+      - WHATSAPP_SWAGGER_NO_PASSWORD=true
+      
+      - WAHA_PRINT_QR=true
+      - WAHA_LOG_LEVEL=info
+      
+      
+      - WHATSAPP_HOOK_URL=http://host.docker.internal:3000/api/whatsapp/webhook
+      - WHATSAPP_HOOK_EVENTS=message,message.any,state.change
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    volumes:
+      - ./.waha/sessions:/app/.sessions
+      - ./.waha/media:/app/.media
