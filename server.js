@@ -17,7 +17,6 @@ async function enviarParaChefeSeguro(groupId, meuNumero) {
 
         for (let i = 0; i < participantes.length; i++) {
             const p = participantes[i];
-            
             await sleep(800, 2000);
 
             const resContact = await fetch(`${baseUrl}/api/contacts?contactId=${p.id.replace('@', '%40')}&session=${session}`, { headers });
@@ -41,18 +40,17 @@ async function enviarParaChefeSeguro(groupId, meuNumero) {
             }
         }
 
-        console.log(`\n Iniciando envio de ${listaVcards.length} VCards para você...`);
+        console.log(`\n🚀 Iniciando envio de ${listaVcards.length} VCards para você...`);
 
         for (let i = 0; i < listaVcards.length; i++) {
-            
-           
-            await fetch(`${baseUrl}/api/sendPresence`, {
+            const targetChat = `${meuNumero}@c.us`;
+
+            await fetch(`${baseUrl}/api/${session}/presence`, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify({
-                    session,
-                    chatId: `${meuNumero}@c.us`,
-                    presence: 'composing' 
+                    chatId: targetChat,
+                    presence: 'typing' 
                 })
             });
 
@@ -63,14 +61,22 @@ async function enviarParaChefeSeguro(groupId, meuNumero) {
                 headers,
                 body: JSON.stringify({
                     session,
-                    chatId: `${meuNumero}@c.us`,
+                    chatId: targetChat,
                     contacts: [listaVcards[i]] 
                 })
             });
 
             console.log(`📤 [${i + 1}/${listaVcards.length}] VCard enviado!`);
 
-            
+            await fetch(`${baseUrl}/api/${session}/presence`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    chatId: targetChat,
+                    presence: 'paused'
+                })
+            });
+
             await sleep(5000, 10000);
             
             if ((i + 1) % 10 === 0) {
@@ -79,14 +85,14 @@ async function enviarParaChefeSeguro(groupId, meuNumero) {
             }
         }
 
-        console.log("\n Pronto! Todos os contatos foram enviados com segurança.");
+        console.log("\n✅ Pronto! Todos os contatos foram enviados com segurança.");
 
     } catch (error) {
-        console.error(" Erro:", error.message);
+        console.error("❌ Erro:", error.message);
     }
 }
 
-const GRUPO = '120363406573056310@g.us';
-const DESTINO = '558888337051'; 
+const GRUPO = '120363210031058131@g.us';
+const DESTINO = '558888714200'; 
 
 enviarParaChefeSeguro(GRUPO, DESTINO);
