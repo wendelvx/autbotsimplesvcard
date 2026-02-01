@@ -44,8 +44,8 @@ async function enviarParaChefeSeguro(labelId, meuNumero) {
     const headers = { Accept: 'application/json', 'Content-Type': 'application/json' };
     
     // CONFIGURAÇÕES OTIMIZADAS
-    const LIMITE_TOTAL_RODADA = 100; 
-    const BLOCO_PAUSA_LONGA = 30; 
+    const LIMITE_TOTAL_RODADA = 50; 
+    const BLOCO_PAUSA_LONGA = 25; 
 
     try {
         const historico = carregarHistorico();
