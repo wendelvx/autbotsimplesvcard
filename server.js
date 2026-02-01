@@ -9,122 +9,150 @@ const ARQUIVO_HISTORICO = 'contatos_enviados.json';
 
 function carregarHistorico() {
     if (fs.existsSync(ARQUIVO_HISTORICO)) {
-        return JSON.parse(fs.readFileSync(ARQUIVO_HISTORICO, 'utf-8'));
+        try {
+            const conteudo = fs.readFileSync(ARQUIVO_HISTORICO, 'utf-8');
+            return JSON.parse(conteudo);
+        } catch (e) {
+            console.error("[AVISO] Erro ao ler JSON, iniciando novo.");
+            return [];
+        }
     }
     return [];
 }
 
-function salvarNoHistorico(listaNova) {
-    const historicoAntigo = carregarHistorico();
-    const historicoAtualizado = [...new Set([...historicoAntigo, ...listaNova])];
-    fs.writeFileSync(ARQUIVO_HISTORICO, JSON.stringify(historicoAtualizado, null, 2));
+function salvarNoHistorico(novosLeads) {
+    const historico = carregarHistorico();
+    // Comparação agora utiliza a chave 'phone'
+    const telefonesExistentes = new Set(historico.map(item => item.phone));
+    
+    novosLeads.forEach(lead => {
+        if (!telefonesExistentes.has(lead.whatsappId)) {
+            historico.push({
+                phone: lead.whatsappId, // Alterado de 'id' para 'phone'
+                nome: lead.fullName,
+                dataEnvio: new Date().toISOString()
+            });
+        }
+    });
+
+    fs.writeFileSync(ARQUIVO_HISTORICO, JSON.stringify(historico, null, 2));
 }
 
-async function enviarParaChefeSeguro(groupId, meuNumero) {
+async function enviarParaChefeSeguro(labelId, meuNumero) {
     const session = 'default';
     const baseUrl = 'http://localhost:3000';
     const headers = { Accept: 'application/json', 'Content-Type': 'application/json' };
+    
+    // CONFIGURAÇÕES OTIMIZADAS
+    const LIMITE_TOTAL_RODADA = 100; 
+    const BLOCO_PAUSA_LONGA = 30; 
 
     try {
-        const jaEnviados = carregarHistorico();
-        let contadorLead = jaEnviados.length;
+        const historico = carregarHistorico();
+        const jaEnviadosPhones = historico.map(item => item.phone);
 
-        const resPart = await fetch(
-            `${baseUrl}/api/${session}/groups/${groupId.replace('@', '%40')}/participants/v2`,
-            { headers }
-        );
+        // 1. Buscar contatos da etiqueta
+        const resLabel = await fetch(`${baseUrl}/api/${session}/labels/${labelId}/chats`, { headers });
+        const chatsDaLabel = await resLabel.json();
 
-        const participantes = await resPart.json();
+        let listaParaProcessar = [];
 
-        const listaVcards = [];
-        const numerosEnviadosNestaRodada = [];
+        for (let chat of chatsDaLabel) {
+            if (chat.id.includes('@g.us')) continue;
 
-        for (let i = 0; i < participantes.length; i++) {
-            const p = participantes[i];
+            let num = null;
+            let chatIdOriginal = chat.id;
 
-            await sleep(500, 1000);
-
-            const resContact = await fetch(
-                `${baseUrl}/api/contacts?contactId=${p.id.replace('@', '%40')}&session=${session}`,
-                { headers }
-            );
-
-            const info = await resContact.json();
-            let num = info.number;
-
-            if (!num || p.id.includes('@lid')) {
-                const resLid = await fetch(
-                    `${baseUrl}/api/${session}/lids/${p.id.replace('@', '%40')}`,
-                    { headers }
-                );
-
-                const lidData = await resLid.json();
-                if (lidData.pn) num = lidData.pn.split('@')[0];
+            if (chatIdOriginal.includes('@lid')) {
+                try {
+                    const resLid = await fetch(`${baseUrl}/api/${session}/lids/${chatIdOriginal.replace('@', '%40')}`, { headers });
+                    const lidData = await resLid.json();
+                    if (lidData.pn) num = lidData.pn.split('@')[0];
+                } catch (e) {}
+            } else {
+                num = chatIdOriginal.split('@')[0];
             }
 
-            if (num && num.length < 15) {
-                if (jaEnviados.includes(num)) {
-                    continue;
-                }
+            // Verifica se o telefone já está no histórico
+            if (!num || jaEnviadosPhones.includes(num)) continue;
 
-                contadorLead++;
-
-                listaVcards.push({
-                    fullName: `Lead ${String(contadorLead).padStart(3, '0')}`,
-                    organization: 'Ítalo Mello',
-                    phoneNumber: `+${num}`,
-                    whatsappId: num
-                });
-
-                numerosEnviadosNestaRodada.push(num);
+            let nomeFinal = chat.name || chat.pushname;
+            if (!nomeFinal) {
+                try {
+                    const resContact = await fetch(`${baseUrl}/api/contacts?contactId=${num}%40c.us&session=${session}`, { headers });
+                    const info = await resContact.json();
+                    nomeFinal = info.name || info.pushname;
+                } catch (e) {}
             }
+
+            listaParaProcessar.push({
+                fullName: nomeFinal || `Lead ${num.slice(-4)}`,
+                organization: 'Ítalo Mello',
+                phoneNumber: `+${num}`,
+                whatsappId: num
+            });
+
+            if (listaParaProcessar.length >= LIMITE_TOTAL_RODADA) break;
         }
 
-        if (listaVcards.length === 0) {
+        if (listaParaProcessar.length === 0) {
+            console.log('[INFO] Sem novos contatos para processar hoje.');
             return;
         }
 
-        for (let i = 0; i < listaVcards.length; i++) {
+        console.log(`[INÍCIO] Enviando ${listaParaProcessar.length} contatos (Ritmo acelerado)...`);
+
+        let contagemBloco = 0;
+        let enviadosSucesso = [];
+
+        for (let i = 0; i < listaParaProcessar.length; i++) {
+            const v = listaParaProcessar[i];
             const targetChat = `${meuNumero}@c.us`;
 
+            // Simulação de presença (Reduzido para 2-4s)
             await fetch(`${baseUrl}/api/${session}/presence`, {
-                method: 'POST',
-                headers,
+                method: 'POST', headers,
                 body: JSON.stringify({ chatId: targetChat, presence: 'typing' })
             });
 
-            await sleep(2000, 4000);
+            await sleep(2000, 4000); 
 
-            await fetch(`${baseUrl}/api/sendContactVcard`, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({
-                    session,
-                    chatId: targetChat,
-                    contacts: [listaVcards[i]]
-                })
+            const resSend = await fetch(`${baseUrl}/api/sendContactVcard`, {
+                method: 'POST', headers,
+                body: JSON.stringify({ session, chatId: targetChat, contacts: [v] })
             });
 
+            if (resSend.ok) {
+                console.log(`[OK] ${i + 1}/${listaParaProcessar.length} - ${v.fullName}`);
+                enviadosSucesso.push(v);
+                contagemBloco++;
+            }
+
             await fetch(`${baseUrl}/api/${session}/presence`, {
-                method: 'POST',
-                headers,
+                method: 'POST', headers,
                 body: JSON.stringify({ chatId: targetChat, presence: 'paused' })
             });
 
-            await sleep(5000, 8000);
+            // Intervalo entre mensagens reduzido para 5-10s
+            await sleep(5000, 10000);
 
-            if ((i + 1) % 10 === 0) {
-                await sleep(30000, 40000);
+            // Pausa de resfriamento a cada 30 envios (60s fixos para agilizar)
+            if (contagemBloco >= BLOCO_PAUSA_LONGA && i !== listaParaProcessar.length - 1) {
+                console.log(`[PAUSA] Resfriamento de 60 segundos...`);
+                await sleep(60000, 65000);
+                contagemBloco = 0;
             }
         }
 
-        salvarNoHistorico(numerosEnviadosNestaRodada);
+        salvarNoHistorico(enviadosSucesso);
+        console.log(`[FIM] Rodada de 100 concluída com sucesso.`);
+
     } catch (error) {
-        console.error(error.message);
+        console.error('[ERRO FATAL]', error.message);
     }
 }
 
-const GRUPO = '120363296259413976@g.us';
-const DESTINO = '558896891064';
+const ID_ETIQUETA = '8'; 
+const DESTINO = '558888714200';
 
-enviarParaChefeSeguro(GRUPO, DESTINO);
+enviarParaChefeSeguro(ID_ETIQUETA, DESTINO);
