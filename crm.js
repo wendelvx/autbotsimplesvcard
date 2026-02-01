@@ -1,5 +1,6 @@
 const fs = require('fs');
 require('dotenv').config();
+
 const sleep = (min, max) => {
     const ms = Math.floor(Math.random() * (max - min + 1) + min);
     return new Promise(r => setTimeout(r, ms));
@@ -8,9 +9,10 @@ const sleep = (min, max) => {
 const ARQUIVO_HISTORICO = 'contatos_enviados.json';
 const ARQUIVO_LOG_TEXTO = 'log_cadastros.txt';
 
-// --- CONFIGURAÇÕES JETIMOB ---
 const JETIMOB_PUBLIC_KEY = process.env.public_key;
 const JETIMOB_PRIVATE_KEY = process.env.private_key;
+
+// --- FUNÇÕES DE AUXÍLIO ---
 
 function carregarHistorico() {
     if (fs.existsSync(ARQUIVO_HISTORICO)) {
@@ -42,7 +44,9 @@ function salvarNoHistorico(leadsFinalizados) {
     fs.writeFileSync(ARQUIVO_HISTORICO, JSON.stringify(historico, null, 2));
 }
 
-async function cadastrarNoJetimob(lead) {
+// --- INTEGRAÇÃO JETIMOB ---
+
+async function cadastrarNoJetimob(lead, nomeEtiqueta) {
     const url = `https://api.jetimob.com/leads/${JETIMOB_PUBLIC_KEY}`;
     
     const formData = new FormData();
@@ -50,12 +54,13 @@ async function cadastrarNoJetimob(lead) {
     formData.append('phone', lead.phoneNumber);
     formData.append('email', `${lead.whatsappId}@lead.com.br`); 
     
-    // Identificação do Sistema
     formData.append('source', 'Sistema Ítalo Mello'); 
-    formData.append('message', 'Lead importado automaticamente via Sistema de Automação.');
+    
+    // Inserindo o nome da etiqueta na mensagem conforme solicitado
+    const mensagemFinal = `Lead importado automaticamente. Etiqueta WhatsApp: ${nomeEtiqueta || 'Sem Etiqueta'}`;
+    formData.append('message', mensagemFinal);
+    
     formData.append('subject', 'Importação via WhatsApp');
-
-    // Deixa vazio para tentar evitar a atribuição automática de responsáveis do CRM
     formData.append('responsible', ''); 
 
     try {
@@ -77,6 +82,8 @@ async function cadastrarNoJetimob(lead) {
     }
 }
 
+// --- PROCESSAMENTO WAHA ---
+
 async function processarEtiquetaParaCRM(labelId) {
     const session = 'default';
     const baseUrl = 'http://localhost:3000';
@@ -85,12 +92,20 @@ async function processarEtiquetaParaCRM(labelId) {
     const LIMITE_RODADA = 500; 
 
     try {
+        // 1. Buscar o nome da etiqueta no WAHA para usar na mensagem
+        console.log(`[INFO] Buscando nome da etiqueta ${labelId}...`);
+        const resLabels = await fetch(`${baseUrl}/api/${session}/labels`, { headers });
+        const labels = await resLabels.json();
+        const etiquetaEncontrada = labels.find(l => l.id === labelId);
+        const nomeDaEtiqueta = etiquetaEncontrada ? etiquetaEncontrada.name : `ID ${labelId}`;
+
+        // 2. Carregar chats da etiqueta
         const historico = carregarHistorico();
         const jaEnviados = historico.map(item => item.phone);
 
-        console.log(`[INFO] Lendo etiqueta ${labelId}...`);
-        const resLabel = await fetch(`${baseUrl}/api/${session}/labels/${labelId}/chats`, { headers });
-        const chats = await resLabel.json();
+        console.log(`[INFO] Lendo chats da etiqueta: ${nomeDaEtiqueta}...`);
+        const resLabelChats = await fetch(`${baseUrl}/api/${session}/labels/${labelId}/chats`, { headers });
+        const chats = await resLabelChats.json();
 
         let listaLeads = [];
 
@@ -110,9 +125,7 @@ async function processarEtiquetaParaCRM(labelId) {
 
             if (!num || jaEnviados.includes(num)) continue;
 
-            // --- BUSCA DE NOME ROBUSTA ---
             let nomeFinal = chat.name || chat.pushname;
-
             if (!nomeFinal) {
                 try {
                     const resContact = await fetch(`${baseUrl}/api/contacts?contactId=${num}%40c.us&session=${session}`, { headers });
@@ -131,37 +144,33 @@ async function processarEtiquetaParaCRM(labelId) {
         }
 
         if (listaLeads.length === 0) {
-            console.log("[INFO] Nenhum lead novo encontrado para processar.");
+            console.log("[INFO] Nenhum lead novo encontrado.");
             return;
         }
 
+        // 3. Cadastrar no CRM passando o nome da etiqueta
         console.log(`[INÍCIO] Cadastrando ${listaLeads.length} leads no Jetimob...`);
-
         let cadastradosComSucesso = [];
 
         for (let i = 0; i < listaLeads.length; i++) {
             const lead = listaLeads[i];
-            const sucesso = await cadastrarNoJetimob(lead);
+            const sucesso = await cadastrarNoJetimob(lead, nomeDaEtiqueta);
             
             if (sucesso) {
                 console.log(`[${i + 1}/${listaLeads.length}] Cadastrado: ${lead.fullName}`);
-                registrarNoLogTexto(`SUCESSO: ${lead.fullName} (${lead.phoneNumber}) cadastrado via Sistema Ítalo Mello.`);
+                registrarNoLogTexto(`SUCESSO: ${lead.fullName} (${lead.phoneNumber}) - Etiqueta: ${nomeDaEtiqueta}`);
                 cadastradosComSucesso.push(lead);
-            } else {
-                registrarNoLogTexto(`FALHA: Não foi possível cadastrar ${lead.fullName} (${lead.phoneNumber}). Verifique logs de resposta acima.`);
             }
-
             await sleep(400, 800);
         }
 
         salvarNoHistorico(cadastradosComSucesso);
-        console.log(`[FIM] Sucesso! Detalhes em '${ARQUIVO_LOG_TEXTO}'.`);
+        console.log(`[FIM] Concluído.`);
 
     } catch (error) {
         console.error('[ERRO FATAL]', error.message);
-        registrarNoLogTexto(`ERRO FATAL: ${error.message}`);
     }
 }
 
-// EXECUÇÃO PARA A ETIQUETA 6
-processarEtiquetaParaCRM('8');
+// EXECUÇÃO
+processarEtiquetaParaCRM('6');

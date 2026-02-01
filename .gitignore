@@ -1,4 +1,5 @@
 .waha/
 .env
+node_modules/
 contatos_enviados.json
 log_cadastros.txt
